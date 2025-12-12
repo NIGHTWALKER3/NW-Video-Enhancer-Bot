@@ -10,50 +10,59 @@ from PIL import Image
 
 logging.basicConfig(level=logging.INFO)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")  # <-- BOT TOKEN COMES FROM GITHUB SECRETS
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 
 # -------------------------
-# START COMMAND
+# START
 # -------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Welcome!\n\n"
-        "Use:\n"
-        "📸 /photo – Enhance Photos\n"
-        "🎥 /video – Enhance Videos"
+        "📸 /photo – Enhance Photo\n"
+        "🎥 /video – Enhance Video"
     )
 
 
 # -------------------------
-# PHOTO ENHANCE COMMAND
+# PHOTO COMMAND
 # -------------------------
 async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["mode"] = "photo"
+
     keyboard = [
-        [InlineKeyboardButton("📸 Send Photo", callback_data="send_photo")]
+        [
+            InlineKeyboardButton("360p", callback_data="p360"),
+            InlineKeyboardButton("720p", callback_data="p720"),
+        ],
+        [
+            InlineKeyboardButton("1080p", callback_data="p1080")
+        ]
     ]
+
     await update.message.reply_text(
-        "Upload the photo you want to enhance.",
+        "Choose quality for photo enhancement:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 
 # -------------------------
-# VIDEO ENHANCE COMMAND
+# VIDEO COMMAND
 # -------------------------
 async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["mode"] = "video"
+
     keyboard = [
         [
-            InlineKeyboardButton("360p", callback_data="360"),
-            InlineKeyboardButton("480p", callback_data="480")
+            InlineKeyboardButton("360p", callback_data="v360"),
+            InlineKeyboardButton("480p", callback_data="v480")
         ],
         [
-            InlineKeyboardButton("720p", callback_data="720"),
-            InlineKeyboardButton("1080p", callback_data="1080")
+            InlineKeyboardButton("720p", callback_data="v720"),
+            InlineKeyboardButton("1080p", callback_data="v1080")
         ]
     ]
+
     await update.message.reply_text(
         "Choose video quality:",
         reply_markup=InlineKeyboardMarkup(keyboard)
@@ -67,15 +76,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    # VIDEO QUALITY SELECTED
-    if query.data in ["360", "480", "720", "1080"]:
-        context.user_data["quality"] = query.data
-        await query.edit_message_text("🎥 Now send the video...")
+    data = query.data
+
+    # PHOTO QUALITY SELECT
+    if data.startswith("p"):
+        context.user_data["photo_quality"] = int(data.replace("p", ""))
+        await query.edit_message_text("📸 Now send the photo…")
         return
 
-    # PHOTO
-    if query.data == "send_photo":
-        await query.edit_message_text("📸 Send your photo now.")
+    # VIDEO QUALITY SELECT
+    if data.startswith("v"):
+        context.user_data["video_quality"] = int(data.replace("v", ""))
+        await query.edit_message_text("🎥 Now send the video…")
         return
 
 
@@ -86,18 +98,28 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("mode") != "photo":
         return
 
+    quality = context.user_data.get("photo_quality", 720)
+
     file = await update.message.photo[-1].get_file()
-    path = "photo.jpg"
+    path = "input_photo.jpg"
     await file.download_to_drive(path)
 
     img = Image.open(path)
-    img = img.resize((img.width * 2, img.height * 2))  # Simple enhancement
-    enhanced_path = "enhanced_photo.jpg"
-    img.save(enhanced_path)
 
-    await update.message.reply_photo(photo=open(enhanced_path, "rb"))
+    # Resize according to quality
+    aspect = img.width / img.height
+    new_height = quality
+    new_width = int(aspect * new_height)
+
+    img = img.resize((new_width, new_height))
+
+    output = "enhanced_photo.jpg"
+    img.save(output)
+
+    await update.message.reply_photo(photo=open(output, "rb"))
+
     os.remove(path)
-    os.remove(enhanced_path)
+    os.remove(output)
 
 
 # -------------------------
@@ -107,24 +129,19 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("mode") != "video":
         return
 
-    quality = context.user_data.get("quality")
+    quality = context.user_data.get("video_quality", 720)
+
     file = await update.message.video.get_file()
-    path = "input.mp4"
+    path = "input_video.mp4"
     await file.download_to_drive(path)
 
     clip = VideoFileClip(path)
 
-    sizes = {
-        "360": 360,
-        "480": 480,
-        "720": 720,
-        "1080": 1080
-    }
+    aspect = clip.w / clip.h
+    new_height = quality
+    new_width = int(aspect * new_height)
 
-    target_h = sizes.get(quality, 720)
-    w = int((clip.w / clip.h) * target_h)
-
-    clip_resized = clip.resize((w, target_h))
+    clip_resized = clip.resize((new_width, new_height))
     output = "enhanced_video.mp4"
     clip_resized.write_videofile(output)
 
