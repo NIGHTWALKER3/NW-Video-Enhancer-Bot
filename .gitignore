@@ -1,0 +1,6 @@
+.env
+*.mp4
+*.mkv
+*.mov
+models/
+__pycache__/

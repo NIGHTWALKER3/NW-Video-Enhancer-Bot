@@ -1,0 +1,10 @@
+python-telegram-bot==20.7
+requests
+torch
+torchvision
+torchaudio
+numpy
+opencv-python
+ffmpeg-python
+realesrgan
+Pillow
