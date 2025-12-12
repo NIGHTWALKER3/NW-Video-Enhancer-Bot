@@ -1,9 +1,19 @@
 import os
 from PIL import Image, ImageFilter
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    filters
+)
 
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"   # ← ADD YOUR TOKEN HERE
+# ----------------------------------------------------------
+# ADD YOUR BOT TOKEN HERE
+# ----------------------------------------------------------
+BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
 
 
 # ----------------------------------------------------------
@@ -40,37 +50,49 @@ async def video_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("720p", callback_data="vid_720")],
         [InlineKeyboardButton("1080p", callback_data="vid_1080")],
     ]
-    await update.message.reply_text("🎥 Choose video quality:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    await update.message.reply_text(
+        "🎥 Choose video quality:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 
 # ----------------------------------------------------------
-# PHOTO QUALITY SELECTION
+# ASK PHOTO QUALITY
 # ----------------------------------------------------------
 async def ask_photo_quality(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("360p", callback_data="img_360")],
         [InlineKeyboardButton("720p", callback_data="img_720")],
-        [InlineKeyboardButton("1080p", callback_data="img_1080")]
+        [InlineKeyboardButton("1080p", callback_data="img_1080")],
     ]
-    await update.message.reply_text("📸 Choose photo quality:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    await update.message.reply_text(
+        "📸 Choose photo quality:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 
 # ----------------------------------------------------------
-# PROCESS PHOTO
+# RECEIVE PHOTO AS FILE (DOCUMENT)
 # ----------------------------------------------------------
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("mode") != "photo":
         return
 
-    await ask_photo_quality(update, context)
+    # Save the Telegram file object
     context.user_data["photo_file"] = await update.message.document.get_file()
+
+    # Ask for quality selection
+    await ask_photo_quality(update, context)
 
 
 # ----------------------------------------------------------
-# ENHANCE PHOTO
+# PROCESS PHOTO (Enhance)
 # ----------------------------------------------------------
 async def process_photo(update: Update, context: ContextTypes.DEFAULT_TYPE, quality_value):
     tg_file = context.user_data.get("photo_file")
+
     if tg_file is None:
         await update.callback_query.edit_message_text("❌ Please send photo again as File.")
         return
@@ -84,14 +106,15 @@ async def process_photo(update: Update, context: ContextTypes.DEFAULT_TYPE, qual
     new_height = quality_value
     new_width = int(aspect * new_height)
 
-    # Basic Enhancement Levels
-    img_light = img.resize((new_width, new_height), Image.LANCZOS)
+    # Resize
+    img_resized = img.resize((new_width, new_height), Image.LANCZOS)
 
-    img_medium = img_light.filter(ImageFilter.SHARPEN)
+    # Enhancement Levels
+    img_light = img_resized
+    img_medium = img_resized.filter(ImageFilter.SHARPEN)
+    img_strong = img_resized.filter(ImageFilter.DETAIL)
 
-    img_strong = img_medium.filter(ImageFilter.DETAIL)
-
-    # Save all three versions
+    # Save
     img_light.save("light.jpg")
     img_medium.save("medium.jpg")
     img_strong.save("strong.jpg")
@@ -111,20 +134,21 @@ async def process_photo(update: Update, context: ContextTypes.DEFAULT_TYPE, qual
 
 
 # ----------------------------------------------------------
-# CALLBACK HANDLER
+# CALLBACK BUTTON HANDLER
 # ----------------------------------------------------------
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
-
     await query.answer()
 
+    # PHOTO QUALITY HANDLER
     if data.startswith("img_"):
         quality = int(data.replace("img_", ""))
         await process_photo(update, context, quality)
 
+    # (VIDEO NOT IMPLEMENTED YET — ONLY MESSAGE)
     elif data.startswith("vid_"):
-        await query.edit_message_text("🎥 Video quality chosen. (Video enhance not added yet)")
+        await query.edit_message_text("🎥 Video enhancement coming soon!")
 
 
 # ----------------------------------------------------------
@@ -137,26 +161,21 @@ def main():
     app.add_handler(CommandHandler("photo", photo_cmd))
     app.add_handler(CommandHandler("video", video_cmd))
 
+    # PHOTO as file
     app.add_handler(MessageHandler(filters.Document.IMAGE, handle_document))
+
+    # If user sends normal photo
     app.add_handler(MessageHandler(filters.PHOTO, lambda u, c: u.message.reply_text(
-        "⚠️ Send the photo as *File* (Document) for enhancement.")))
+        "⚠️ Please send the photo as *File* (Document)."
+    )))
 
-    app.add_handler(MessageHandler(filters.VIDEO, lambda u, c: u.message.reply_text("Use /video to choose quality first.")))
+    # If user sends video without command
+    app.add_handler(MessageHandler(filters.VIDEO, lambda u, c: u.message.reply_text(
+        "Use /video to choose quality first."
+    )))
 
-    app.add_handler(MessageHandler(filters.COMMAND, start))
-
-    app.add_handler(MessageHandler(filters.ALL, lambda u, c: None))
-    app.add_handler(CommandHandler("help", start))
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("photo", photo_cmd))
-    app.add_handler(CommandHandler("video", video_cmd))
-
-    app.add_handler(MessageHandler(filters.Document.IMAGE, handle_document))
-    app.add_handler(MessageHandler(filters.PHOTO, lambda u, c: u.message.reply_text(
-        "⚠️ Please send photo as *File*, not photo.")))
-
-    app.add_handler(telegram.ext.CallbackQueryHandler(button_handler))
+    # Buttons
+    app.add_handler(CallbackQueryHandler(button_handler))
 
     app.run_polling()
 
