@@ -1,58 +1,57 @@
 import os
-import tempfile
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
-from enhancer import enhance_video
+from dotenv import load_dotenv
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from enhancer import enhance_photo, enhance_video  # Your AI enhancer functions
+
+load_dotenv()  # Load .env for API key
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
+# ----- Commands -----
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🔥 Welcome to AI Video Enhancer Bot\n\n"
-        "/fix – Fix blurry\n"
-        "/4k – Upscale to 4K\n"
-        "/restore – Restore old footage\n\n"
-        "Send a video after choosing a command."
-    )
+    await update.message.reply_text("Welcome! Use /enhance_photo or /enhance_video")
 
-user_mode = {}
+async def enhance_photo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("720p", callback_data="photo_720")],
+        [InlineKeyboardButton("1080p", callback_data="photo_1080")],
+        [InlineKeyboardButton("4K", callback_data="photo_4k")]
+    ]
+    await update.message.reply_text("Select photo quality:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def fix(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_mode[update.effective_user.id] = "fix"
-    await update.message.reply_text("✔ Send the video to fix blur.")
+async def enhance_video_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("720p", callback_data="video_720")],
+        [InlineKeyboardButton("1080p", callback_data="video_1080")],
+        [InlineKeyboardButton("4K", callback_data="video_4k")]
+    ]
+    await update.message.reply_text("Select video quality:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def upscale(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_mode[update.effective_user.id] = "4k"
-    await update.message.reply_text("✔ Send the video to upscale to 4K.")
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
 
-async def restore(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_mode[update.effective_user.id] = "restore"
-    await update.message.reply_text("✔ Send the video to restore.")
+    if "photo" in data:
+        quality = data.split("_")[1]
+        # Here call your enhance_photo function
+        await query.edit_message_text(f"Enhancing photo at {quality} quality...")
+        # result = enhance_photo(file, quality)
+        # send result back to user
+    elif "video" in data:
+        quality = data.split("_")[1]
+        await query.edit_message_text(f"Enhancing video at {quality} quality...")
+        # result = enhance_video(file, quality)
 
-async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    mode = user_mode.get(user_id, None)
+# ----- Main -----
+app = ApplicationBuilder().token(BOT_TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("enhance_photo", enhance_photo_command))
+app.add_handler(CommandHandler("enhance_video", enhance_video_command))
+app.add_handler(CallbackQueryHandler(button))
 
-    if mode is None:
-        await update.message.reply_text("❗ Choose a mode first: /fix /4k /restore")
-        return
-
-    video = await update.message.video.get_file()
-
-    with tempfile.NamedTemporaryFile(delete=True, suffix=".mp4") as input_file:
-        await video.download_to_drive(input_file.name)
-        output_path = enhance_video(input_file.name, mode)
-
-        await update.message.reply_document(open(output_path, "rb"))
-        os.remove(output_path)
-
-application = ApplicationBuilder().token(BOT_TOKEN).build()
-
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("fix", fix))
-application.add_handler(CommandHandler("4k", upscale))
-application.add_handler(CommandHandler("restore", restore))
-application.add_handler(MessageHandler(filters.VIDEO, handle_video))
-
+# Run bot
 if __name__ == "__main__":
-    application.run_polling()
+    import asyncio
+    asyncio.run(app.run_polling())
