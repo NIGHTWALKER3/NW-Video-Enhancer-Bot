@@ -1,169 +1,162 @@
 import os
-import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler,
-    CallbackQueryHandler, filters, ContextTypes
-)
-from moviepy.editor import VideoFileClip
-from PIL import Image
+from PIL import Image, ImageFilter
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-logging.basicConfig(level=logging.INFO)
-
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"   # ← ADD YOUR TOKEN HERE
 
 
-# -------------------------
-# START
-# -------------------------
+# ----------------------------------------------------------
+# /start
+# ----------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Welcome!\n\n"
-        "📸 /photo – Enhance Photo\n"
-        "🎥 /video – Enhance Video"
+        "👋 Welcome to the NW Enhancer Bot!\n\n"
+        "Commands:\n"
+        "/photo - Enhance Photo\n"
+        "/video - Enhance Video\n"
     )
 
 
-# -------------------------
-# PHOTO COMMAND
-# -------------------------
-async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ----------------------------------------------------------
+# /photo command
+# ----------------------------------------------------------
+async def photo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["mode"] = "photo"
-
-    keyboard = [
-        [
-            InlineKeyboardButton("360p", callback_data="p360"),
-            InlineKeyboardButton("720p", callback_data="p720"),
-        ],
-        [
-            InlineKeyboardButton("1080p", callback_data="p1080")
-        ]
-    ]
-
     await update.message.reply_text(
-        "Choose quality for photo enhancement:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        "📸 Please send the *photo as a File* (Document).\n"
+        "After that, choose quality."
     )
 
 
-# -------------------------
-# VIDEO COMMAND
-# -------------------------
-async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ----------------------------------------------------------
+# /video command
+# ----------------------------------------------------------
+async def video_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["mode"] = "video"
 
     keyboard = [
-        [
-            InlineKeyboardButton("360p", callback_data="v360"),
-            InlineKeyboardButton("480p", callback_data="v480")
-        ],
-        [
-            InlineKeyboardButton("720p", callback_data="v720"),
-            InlineKeyboardButton("1080p", callback_data="v1080")
-        ]
+        [InlineKeyboardButton("360p", callback_data="vid_360")],
+        [InlineKeyboardButton("720p", callback_data="vid_720")],
+        [InlineKeyboardButton("1080p", callback_data="vid_1080")],
     ]
-
-    await update.message.reply_text(
-        "Choose video quality:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    await update.message.reply_text("🎥 Choose video quality:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-# -------------------------
-# BUTTON HANDLER
-# -------------------------
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    data = query.data
-
-    # PHOTO QUALITY SELECT
-    if data.startswith("p"):
-        context.user_data["photo_quality"] = int(data.replace("p", ""))
-        await query.edit_message_text("📸 Now send the photo…")
-        return
-
-    # VIDEO QUALITY SELECT
-    if data.startswith("v"):
-        context.user_data["video_quality"] = int(data.replace("v", ""))
-        await query.edit_message_text("🎥 Now send the video…")
-        return
+# ----------------------------------------------------------
+# PHOTO QUALITY SELECTION
+# ----------------------------------------------------------
+async def ask_photo_quality(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("360p", callback_data="img_360")],
+        [InlineKeyboardButton("720p", callback_data="img_720")],
+        [InlineKeyboardButton("1080p", callback_data="img_1080")]
+    ]
+    await update.message.reply_text("📸 Choose photo quality:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-# -------------------------
+# ----------------------------------------------------------
 # PROCESS PHOTO
-# -------------------------
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ----------------------------------------------------------
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("mode") != "photo":
         return
 
-    quality = context.user_data.get("photo_quality", 720)
+    await ask_photo_quality(update, context)
+    context.user_data["photo_file"] = await update.message.document.get_file()
 
-    file = await update.message.photo[-1].get_file()
-    path = "input_photo.jpg"
-    await file.download_to_drive(path)
+
+# ----------------------------------------------------------
+# ENHANCE PHOTO
+# ----------------------------------------------------------
+async def process_photo(update: Update, context: ContextTypes.DEFAULT_TYPE, quality_value):
+    tg_file = context.user_data.get("photo_file")
+    if tg_file is None:
+        await update.callback_query.edit_message_text("❌ Please send photo again as File.")
+        return
+
+    path = "input.jpg"
+    await tg_file.download_to_drive(path)
 
     img = Image.open(path)
 
-    # Resize according to quality
     aspect = img.width / img.height
-    new_height = quality
+    new_height = quality_value
     new_width = int(aspect * new_height)
 
-    img = img.resize((new_width, new_height))
+    # Basic Enhancement Levels
+    img_light = img.resize((new_width, new_height), Image.LANCZOS)
 
-    output = "enhanced_photo.jpg"
-    img.save(output)
+    img_medium = img_light.filter(ImageFilter.SHARPEN)
 
-    await update.message.reply_photo(photo=open(output, "rb"))
+    img_strong = img_medium.filter(ImageFilter.DETAIL)
 
+    # Save all three versions
+    img_light.save("light.jpg")
+    img_medium.save("medium.jpg")
+    img_strong.save("strong.jpg")
+
+    await update.callback_query.edit_message_text("✨ Enhanced versions ready!")
+
+    # Send all versions
+    await update.callback_query.message.reply_document(open("light.jpg", "rb"), caption="Light Enhanced")
+    await update.callback_query.message.reply_document(open("medium.jpg", "rb"), caption="Medium Enhanced")
+    await update.callback_query.message.reply_document(open("strong.jpg", "rb"), caption="Strong Enhanced")
+
+    # Cleanup
+    os.remove("light.jpg")
+    os.remove("medium.jpg")
+    os.remove("strong.jpg")
     os.remove(path)
-    os.remove(output)
 
 
-# -------------------------
-# PROCESS VIDEO
-# -------------------------
-async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get("mode") != "video":
-        return
+# ----------------------------------------------------------
+# CALLBACK HANDLER
+# ----------------------------------------------------------
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
 
-    quality = context.user_data.get("video_quality", 720)
+    await query.answer()
 
-    file = await update.message.video.get_file()
-    path = "input_video.mp4"
-    await file.download_to_drive(path)
+    if data.startswith("img_"):
+        quality = int(data.replace("img_", ""))
+        await process_photo(update, context, quality)
 
-    clip = VideoFileClip(path)
-
-    aspect = clip.w / clip.h
-    new_height = quality
-    new_width = int(aspect * new_height)
-
-    clip_resized = clip.resize((new_width, new_height))
-    output = "enhanced_video.mp4"
-    clip_resized.write_videofile(output)
-
-    await update.message.reply_video(video=open(output, "rb"))
-
-    clip.close()
-    os.remove(path)
-    os.remove(output)
+    elif data.startswith("vid_"):
+        await query.edit_message_text("🎥 Video quality chosen. (Video enhance not added yet)")
 
 
-# -------------------------
+# ----------------------------------------------------------
 # MAIN
-# -------------------------
+# ----------------------------------------------------------
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("photo", photo))
-    app.add_handler(CommandHandler("video", video))
-    app.add_handler(CallbackQueryHandler(button))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.add_handler(MessageHandler(filters.VIDEO, handle_video))
+    app.add_handler(CommandHandler("photo", photo_cmd))
+    app.add_handler(CommandHandler("video", video_cmd))
+
+    app.add_handler(MessageHandler(filters.Document.IMAGE, handle_document))
+    app.add_handler(MessageHandler(filters.PHOTO, lambda u, c: u.message.reply_text(
+        "⚠️ Send the photo as *File* (Document) for enhancement.")))
+
+    app.add_handler(MessageHandler(filters.VIDEO, lambda u, c: u.message.reply_text("Use /video to choose quality first.")))
+
+    app.add_handler(MessageHandler(filters.COMMAND, start))
+
+    app.add_handler(MessageHandler(filters.ALL, lambda u, c: None))
+    app.add_handler(CommandHandler("help", start))
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("photo", photo_cmd))
+    app.add_handler(CommandHandler("video", video_cmd))
+
+    app.add_handler(MessageHandler(filters.Document.IMAGE, handle_document))
+    app.add_handler(MessageHandler(filters.PHOTO, lambda u, c: u.message.reply_text(
+        "⚠️ Please send photo as *File*, not photo.")))
+
+    app.add_handler(telegram.ext.CallbackQueryHandler(button_handler))
 
     app.run_polling()
 
