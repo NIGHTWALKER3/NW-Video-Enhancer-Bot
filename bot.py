@@ -1,57 +1,155 @@
 import os
-from dotenv import load_dotenv
+import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
-from enhancer import enhance_photo, enhance_video  # Your AI enhancer functions
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, MessageHandler,
+    CallbackQueryHandler, filters, ContextTypes
+)
+from moviepy.editor import VideoFileClip
+from PIL import Image
 
-load_dotenv()  # Load .env for API key
+logging.basicConfig(level=logging.INFO)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # <-- BOT TOKEN COMES FROM GITHUB SECRETS
 
-# ----- Commands -----
+
+# -------------------------
+# START COMMAND
+# -------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Welcome! Use /enhance_photo or /enhance_video")
+    await update.message.reply_text(
+        "👋 Welcome!\n\n"
+        "Use:\n"
+        "📸 /photo – Enhance Photos\n"
+        "🎥 /video – Enhance Videos"
+    )
 
-async def enhance_photo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+# -------------------------
+# PHOTO ENHANCE COMMAND
+# -------------------------
+async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["mode"] = "photo"
     keyboard = [
-        [InlineKeyboardButton("720p", callback_data="photo_720")],
-        [InlineKeyboardButton("1080p", callback_data="photo_1080")],
-        [InlineKeyboardButton("4K", callback_data="photo_4k")]
+        [InlineKeyboardButton("📸 Send Photo", callback_data="send_photo")]
     ]
-    await update.message.reply_text("Select photo quality:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text(
+        "Upload the photo you want to enhance.",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
-async def enhance_video_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+# -------------------------
+# VIDEO ENHANCE COMMAND
+# -------------------------
+async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["mode"] = "video"
     keyboard = [
-        [InlineKeyboardButton("720p", callback_data="video_720")],
-        [InlineKeyboardButton("1080p", callback_data="video_1080")],
-        [InlineKeyboardButton("4K", callback_data="video_4k")]
+        [
+            InlineKeyboardButton("360p", callback_data="360"),
+            InlineKeyboardButton("480p", callback_data="480")
+        ],
+        [
+            InlineKeyboardButton("720p", callback_data="720"),
+            InlineKeyboardButton("1080p", callback_data="1080")
+        ]
     ]
-    await update.message.reply_text("Select video quality:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text(
+        "Choose video quality:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
+
+# -------------------------
+# BUTTON HANDLER
+# -------------------------
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data
 
-    if "photo" in data:
-        quality = data.split("_")[1]
-        # Here call your enhance_photo function
-        await query.edit_message_text(f"Enhancing photo at {quality} quality...")
-        # result = enhance_photo(file, quality)
-        # send result back to user
-    elif "video" in data:
-        quality = data.split("_")[1]
-        await query.edit_message_text(f"Enhancing video at {quality} quality...")
-        # result = enhance_video(file, quality)
+    # VIDEO QUALITY SELECTED
+    if query.data in ["360", "480", "720", "1080"]:
+        context.user_data["quality"] = query.data
+        await query.edit_message_text("🎥 Now send the video...")
+        return
 
-# ----- Main -----
-app = ApplicationBuilder().token(BOT_TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("enhance_photo", enhance_photo_command))
-app.add_handler(CommandHandler("enhance_video", enhance_video_command))
-app.add_handler(CallbackQueryHandler(button))
+    # PHOTO
+    if query.data == "send_photo":
+        await query.edit_message_text("📸 Send your photo now.")
+        return
 
-# Run bot
+
+# -------------------------
+# PROCESS PHOTO
+# -------------------------
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("mode") != "photo":
+        return
+
+    file = await update.message.photo[-1].get_file()
+    path = "photo.jpg"
+    await file.download_to_drive(path)
+
+    img = Image.open(path)
+    img = img.resize((img.width * 2, img.height * 2))  # Simple enhancement
+    enhanced_path = "enhanced_photo.jpg"
+    img.save(enhanced_path)
+
+    await update.message.reply_photo(photo=open(enhanced_path, "rb"))
+    os.remove(path)
+    os.remove(enhanced_path)
+
+
+# -------------------------
+# PROCESS VIDEO
+# -------------------------
+async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("mode") != "video":
+        return
+
+    quality = context.user_data.get("quality")
+    file = await update.message.video.get_file()
+    path = "input.mp4"
+    await file.download_to_drive(path)
+
+    clip = VideoFileClip(path)
+
+    sizes = {
+        "360": 360,
+        "480": 480,
+        "720": 720,
+        "1080": 1080
+    }
+
+    target_h = sizes.get(quality, 720)
+    w = int((clip.w / clip.h) * target_h)
+
+    clip_resized = clip.resize((w, target_h))
+    output = "enhanced_video.mp4"
+    clip_resized.write_videofile(output)
+
+    await update.message.reply_video(video=open(output, "rb"))
+
+    clip.close()
+    os.remove(path)
+    os.remove(output)
+
+
+# -------------------------
+# MAIN
+# -------------------------
+def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("photo", photo))
+    app.add_handler(CommandHandler("video", video))
+    app.add_handler(CallbackQueryHandler(button))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(MessageHandler(filters.VIDEO, handle_video))
+
+    app.run_polling()
+
+
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(app.run_polling())
+    main()
