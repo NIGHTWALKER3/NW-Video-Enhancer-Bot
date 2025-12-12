@@ -1,10 +1,5 @@
 python-telegram-bot==20.7
-python-dotenv
-opencv-python
-realesrgan
-ffmpeg-python
-torch
-torchvision
-torchaudio
-numpy
 Pillow
+moviepy
+imageio
+imageio-ffmpeg
